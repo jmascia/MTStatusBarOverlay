@@ -46,7 +46,8 @@ typedef enum MTDetailViewMode {
 typedef enum MTMessageType {
 	MTMessageTypeActivity,				// shows actvity indicator
 	MTMessageTypeFinish,				// shows checkmark
-	MTMessageTypeError					// shows error-mark
+	MTMessageTypeError,        // shows error-mark
+  MTMessageTypeIcon,       // JM: shows user-provided image
 } MTMessageType;
 
 
@@ -56,6 +57,7 @@ typedef enum MTMessageType {
 #define kMTStatusBarOverlayDurationKey			@"MessageDuration"
 #define kMTStatusBarOverlayAnimationKey			@"MessageAnimation"
 #define kMTStatusBarOverlayImmediateKey			@"MessageImmediate"
+#define kMTStatusBarOverlayIconKey          @"MessageIcon"          // JM: User-supplied icon.
 
 // keys used for saving state to NSUserDefaults
 #define kMTStatusBarOverlayStateShrinked        @"kMTStatusBarOverlayStateShrinked"
@@ -117,6 +119,10 @@ typedef enum MTMessageType {
 // the delegate of the overlay
 @property (nonatomic, unsafe_unretained) id<MTStatusBarOverlayDelegate> delegate;
 @property(nonatomic, strong) UIColor *customTextColor;
+
+// JM: for displaying user-provided custom icon image.
+@property (nonatomic, strong) UIImageView* iconView;
+
 //===========================================================
 #pragma mark -
 #pragma mark Class Methods
@@ -159,6 +165,13 @@ typedef enum MTMessageType {
 - (void)postErrorMessage:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated;
 // clears the message queue and shows this message instantly
 - (void)postImmediateErrorMessage:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated;
+
+// shows a user-supplied icon instead of the activity indicator and hides the status bar after the specified duration
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration;
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated;
+// clears the message queue and shows this message instantly
+- (void)postImmediateIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated;
+
 
 // hides the status bar overlay and resets it
 - (void)hide;

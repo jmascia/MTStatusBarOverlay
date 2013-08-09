@@ -194,6 +194,12 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 // intern method that does all the work of showing the next message in the queue
 - (void)showNextMessage;
 
+// JM: Copy of postMessage:type:duration:animated:immediate: that also handles a custom icon.
+- (void)postMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated immediate:(BOOL)immediate icon:(UIImage*)icon;
+
+// JM: Copy of postImmediateMessage:type:duration:animated:immediate: that also handles a custom icon.
+- (void)postImmediateMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated icon:(UIImage*)icon;
+
 // is called when the user touches the statusbar
 - (void)contentViewClicked:(UIGestureRecognizer *)gestureRecognizer;
 // is called when the user swipes down the statusbar
@@ -271,6 +277,10 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 @synthesize delegate = delegate_;
 @synthesize forcedToHide = forcedToHide_;
 @synthesize lastPostedMessage = lastPostedMessage_;
+
+// JM: ImageView for displaying custom user-provided icon.
+@synthesize iconView = iconView_;
+
 
 ////////////////////////////////////////////////////////////////////////
 #pragma mark -
@@ -435,7 +445,16 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
         
 		// the hidden status label at the beginning
 		hiddenStatusLabel_ = statusLabel2_;
-        
+
+    // JM: Icon ImageView
+    iconView_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f, backgroundView_.frame.size.height, backgroundView_.frame.size.height-1.f)];
+    iconView_.clipsToBounds = NO;
+    iconView_.contentMode = UIViewContentModeCenter;
+    iconView_.backgroundColor = [UIColor clearColor];
+    iconView_.hidden = YES;
+    [self addSubviewToBackgroundView:iconView_];
+
+
         progress_ = 1.0;
         progressView_ = [[UIImageView alloc] initWithFrame:statusBarBackgroundImageView_.frame];
         progressView_.opaque = NO;
@@ -570,6 +589,18 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	[self postImmediateMessage:message type:MTMessageTypeError duration:duration animated:animated];
 }
 
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration {
+  [self postIcon:icon message:message duration:duration animated:YES];
+}
+
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated {
+  [self postMessage:message type:MTMessageTypeIcon duration:duration animated:animated immediate:NO icon:icon];
+}
+
+- (void)postImmediateIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated {
+  [self postImmediateMessage:message type:MTMessageTypeIcon duration:duration animated:animated icon:icon];
+}
+
 - (void)postMessageDictionary:(NSDictionary *)messageDictionary {
     [self postMessage:[messageDictionary valueForKey:kMTStatusBarOverlayMessageKey]
                  type:[[messageDictionary valueForKey:kMTStatusBarOverlayMessageTypeKey] intValue]
@@ -584,13 +615,14 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
         if (message.length == 0) {
             return;
         }
-        
+
         NSDictionary *messageDictionaryRepresentation = [NSDictionary dictionaryWithObjectsAndKeys:message, kMTStatusBarOverlayMessageKey,
                                                          [NSNumber numberWithInt:messageType], kMTStatusBarOverlayMessageTypeKey,
                                                          [NSNumber numberWithDouble:duration], kMTStatusBarOverlayDurationKey,
                                                          [NSNumber numberWithBool:animated],  kMTStatusBarOverlayAnimationKey,
                                                          [NSNumber numberWithBool:immediate], kMTStatusBarOverlayImmediateKey, nil];
-        
+
+
         @synchronized (self.messageQueue) {
             [self.messageQueue insertObject:messageDictionaryRepresentation atIndex:0];
         }
@@ -622,6 +654,62 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	}
     
 	[self postMessage:message type:messageType duration:duration animated:animated immediate:YES];
+}
+
+
+// JM: Copy of postMessage:type:duration:animated:immediate: that also handles a custom icon.
+- (void)postMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated immediate:(BOOL)immediate icon:(UIImage*)icon {
+  mt_dispatch_sync_on_main_thread(^{
+    // don't add to queue when message is empty
+    if (message.length == 0) {
+      return;
+    }
+    
+    NSMutableDictionary* mutableMessageDictionaryRepresentation = [NSMutableDictionary dictionaryWithObjectsAndKeys:message, kMTStatusBarOverlayMessageKey,
+                                                                   [NSNumber numberWithInt:messageType], kMTStatusBarOverlayMessageTypeKey,
+                                                                   [NSNumber numberWithDouble:duration], kMTStatusBarOverlayDurationKey,
+                                                                   [NSNumber numberWithBool:animated],  kMTStatusBarOverlayAnimationKey,
+                                                                   [NSNumber numberWithBool:immediate], kMTStatusBarOverlayImmediateKey, nil];
+    
+    if (icon != nil) {
+      [mutableMessageDictionaryRepresentation setValue:icon forKey:kMTStatusBarOverlayIconKey];
+    }
+    
+    NSDictionary *messageDictionaryRepresentation = [NSDictionary dictionaryWithDictionary:mutableMessageDictionaryRepresentation];
+    
+    
+    @synchronized (self.messageQueue) {
+      [self.messageQueue insertObject:messageDictionaryRepresentation atIndex:0];
+    }
+    
+    // if the overlay is currently not active, begin with showing of messages
+    if (!self.active) {
+      [self showNextMessage];
+    }
+  });
+}
+
+// JM: Copy of postImmediateMessage:type:duration:animated:immediate: that also handles a custom icon.
+- (void)postImmediateMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated icon:(UIImage*)icon {
+	@synchronized(self.messageQueue) {
+		NSMutableArray *clearedMessages = [NSMutableArray array];
+    
+		for (id messageDictionary in self.messageQueue) {
+			if (messageDictionary != [self.messageQueue lastObject] &&
+          (self.canRemoveImmediateMessagesFromQueue || [[messageDictionary valueForKey:kMTStatusBarOverlayImmediateKey] boolValue] == NO)) {
+				[clearedMessages addObject:messageDictionary];
+			}
+		}
+    
+		[self.messageQueue removeObjectsInArray:clearedMessages];
+    
+		// call delegate
+		if ([self.delegate respondsToSelector:@selector(statusBarOverlayDidClearMessageQueue:)] && clearedMessages.count > 0) {
+			[self.delegate statusBarOverlayDidClearMessageQueue:clearedMessages];
+		}
+	}
+  
+	[self postMessage:message type:messageType duration:duration animated:animated immediate:YES icon:icon];
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -691,6 +779,12 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	[self setStatusBarBackgroundForStyle:statusBarStyle];
 	[self setColorSchemeForStatusBarStyle:statusBarStyle messageType:messageType];
 	[self updateUIForMessageType:messageType duration:duration];
+  
+  // JM: if it's an icon type message, then set the icon to the imageView
+  if (messageType == MTMessageTypeIcon) {
+    UIImage* icon = [nextMessageDictionary valueForKey:kMTStatusBarOverlayIconKey];
+    iconView_.image = icon;
+  }
     
 	// if status bar is currently hidden, show it unless it is forced to hide
 	if (self.reallyHidden) {
@@ -1288,6 +1382,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			// show activity indicator, hide finished-label
 			self.finishedLabel.hidden = YES;
 			self.activityIndicator.hidden = self.hidesActivity;
+      self.iconView.hidden = YES;
             
 			// start activity indicator
 			if (!self.hidesActivity) {
@@ -1300,6 +1395,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			// show finished-label, hide acitvity indicator
 			self.finishedLabel.hidden = self.hidesActivity;
 			self.activityIndicator.hidden = YES;
+      self.iconView.hidden = YES;
             
 			// stop activity indicator
 			[self.activityIndicator stopAnimating];
@@ -1315,6 +1411,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			// show finished-label, hide activity indicator
 			self.finishedLabel.hidden = self.hidesActivity;
 			self.activityIndicator.hidden = YES;
+      self.iconView.hidden = YES;
             
 			// stop activity indicator
 			[self.activityIndicator stopAnimating];
@@ -1324,8 +1421,22 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			self.finishedLabel.text = kErrorText;
             self.progress = 1.0;
 			break;
+    case MTMessageTypeIcon:
+			// will call hide after delay
+			self.hideInProgress = YES;
+			// hide finished-label, hide activity indicator
+			self.finishedLabel.hidden = YES;
+			self.activityIndicator.hidden = YES;
+      // show icon
+      self.iconView.hidden = NO;
+      
+			// stop activity indicator
+			[self.activityIndicator stopAnimating];
+      
+      self.progress = 1.0;
+			break;
 	}
-    
+  
     // if a duration is specified, hide after given duration
     if (duration > 0.) {
         // hide after duration
