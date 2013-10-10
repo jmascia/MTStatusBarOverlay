@@ -279,7 +279,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 @synthesize lastPostedMessage = lastPostedMessage_;
 
 // JM: ImageView for displaying custom user-provided icon.
-@synthesize iconView = iconView_;
+@synthesize iconView1 = iconView1_;
+@synthesize iconView2 = iconView2_;
+@synthesize hiddenIconView = hiddenIconView_;
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -446,14 +448,25 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		// the hidden status label at the beginning
 		hiddenStatusLabel_ = statusLabel2_;
 
-    // JM: Icon ImageView
-    iconView_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f, backgroundView_.frame.size.height, backgroundView_.frame.size.height-1.f)];
-    iconView_.clipsToBounds = NO;
-    iconView_.contentMode = UIViewContentModeCenter;
-    iconView_.backgroundColor = [UIColor clearColor];
-    iconView_.hidden = YES;
-    [self addSubviewToBackgroundView:iconView_];
+    // JM: Icon ImageViews.
+    // Icon View 1 is first visible
+    iconView1_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f, backgroundView_.frame.size.height, backgroundView_.frame.size.height-1.f)];
+    iconView1_.clipsToBounds = NO;
+    iconView1_.contentMode = UIViewContentModeCenter;
+    iconView1_.backgroundColor = [UIColor clearColor];
+    iconView1_.hidden = YES;
+    [self addSubviewToBackgroundView:iconView1_];
 
+    // Icon View 2 is hidden
+    iconView2_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f + backgroundView_.frame.size.height, backgroundView_.frame.size.height, backgroundView_.frame.size.height-1.f)];
+    iconView2_.clipsToBounds = NO;
+    iconView2_.contentMode = UIViewContentModeCenter;
+    iconView2_.backgroundColor = [UIColor clearColor];
+    iconView2_.hidden = YES;
+    [self addSubviewToBackgroundView:iconView2_];
+      
+    // the hidden status label at the beginning
+    hiddenIconView_ = iconView2_;
 
         progress_ = 1.0;
         progressView_ = [[UIImageView alloc] initWithFrame:statusBarBackgroundImageView_.frame];
@@ -788,17 +801,13 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	[self setStatusBarBackgroundForStyle:statusBarStyle];
 	[self setColorSchemeForStatusBarStyle:statusBarStyle messageType:messageType];
 	[self updateUIForMessageType:messageType duration:duration];
-  
-  // JM: if it's an icon type message, then set the icon to the imageView
-  if (messageType == MTMessageTypeIcon) {
-    UIImage* icon = [nextMessageDictionary valueForKey:kMTStatusBarOverlayIconKey];
-    iconView_.image = icon;
-  }
     
 	// if status bar is currently hidden, show it unless it is forced to hide
 	if (self.reallyHidden) {
 		// clear currently visible status label
 		self.visibleStatusLabel.text = @"";
+    // clear currently visible icon view
+    self.visibleIconView.image = nil;
         
 		// show status bar overlay with animation
 		[UIView animateWithDuration:self.shrinked ? 0 : kAppearAnimationDuration
@@ -809,6 +818,13 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
     
     
     if (animated) {
+      
+        // JM: if it's an icon type message, then set the icon to the imageView
+        if (messageType == MTMessageTypeIcon) {
+          UIImage* icon = [nextMessageDictionary valueForKey:kMTStatusBarOverlayIconKey];
+          self.hiddenIconView.image = icon;
+        }
+      
         // set text of currently not visible label to new text
         self.hiddenStatusLabel.text = message;
         // update progressView to only cover displayed text
@@ -819,8 +835,13 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                                                   kStatusBarHeight,
                                                   self.hiddenStatusLabel.frame.size.width,
                                                   self.hiddenStatusLabel.frame.size.height);
-        
-        
+      
+        // position hidden icon view under visible icon view
+        self.hiddenIconView.frame = CGRectMake(self.hiddenIconView.frame.origin.x,
+                                               kStatusBarHeight,
+                                               self.hiddenIconView.frame.size.width,
+                                               self.hiddenIconView.frame.size.height);
+      
         // animate hidden label into user view and visible status label out of view
         [UIView animateWithDuration:kNextStatusAnimationDuration
                               delay:0
@@ -835,6 +856,16 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                                                                   self.statusLabel2.frame.origin.y - kStatusBarHeight,
                                                                   self.statusLabel2.frame.size.width,
                                                                   self.statusLabel2.frame.size.height);
+                           
+                           // move both icon views up
+                           self.iconView1.frame = CGRectMake(self.iconView1.frame.origin.x,
+                                                             self.iconView1.frame.origin.y - kStatusBarHeight,
+                                                             self.iconView1.frame.size.width,
+                                                             self.iconView1.frame.size.height);
+                           self.iconView2.frame = CGRectMake(self.iconView2.frame.origin.x,
+                                                             self.iconView2.frame.origin.y - kStatusBarHeight,
+                                                             self.iconView2.frame.size.width,
+                                                             self.iconView2.frame.size.height);
                          }
                          completion:^(BOOL finished) {
                              // add old message to history
@@ -846,7 +877,14 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                              } else {
                                  self.hiddenStatusLabel = self.statusLabel1;
                              }
-                             
+
+                           // after animation, set new hidden icon view indicator
+                           if (self.hiddenIconView == self.iconView1) {
+                             self.hiddenIconView = self.iconView2;
+                           } else {
+                             self.hiddenIconView = self.iconView1;
+                           }
+                           
                              // remove the message from the queue
                              @synchronized(self.messageQueue) {
                                  if (self.messageQueue.count > 0)
@@ -1168,6 +1206,14 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	return self.statusLabel1;
 }
 
+- (UIImageView *)visibleIconView {
+	if (self.hiddenIconView == self.iconView1) {
+		return self.iconView2;
+	}
+  
+	return self.iconView1;
+}
+
 ////////////////////////////////////////////////////////////////////////
 #pragma mark -
 #pragma mark UITableViewDataSource
@@ -1391,8 +1437,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			// show activity indicator, hide finished-label
 			self.finishedLabel.hidden = YES;
 			self.activityIndicator.hidden = self.hidesActivity;
-      self.iconView.hidden = YES;
-            
+      self.iconView1.hidden = YES;
+      self.iconView2.hidden = YES;
+      
 			// start activity indicator
 			if (!self.hidesActivity) {
 				[self.activityIndicator startAnimating];
@@ -1404,8 +1451,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			// show finished-label, hide acitvity indicator
 			self.finishedLabel.hidden = self.hidesActivity;
 			self.activityIndicator.hidden = YES;
-      self.iconView.hidden = YES;
-            
+      self.iconView1.hidden = YES;
+      self.iconView2.hidden = YES;
+      
 			// stop activity indicator
 			[self.activityIndicator stopAnimating];
             
@@ -1420,8 +1468,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			// show finished-label, hide activity indicator
 			self.finishedLabel.hidden = self.hidesActivity;
 			self.activityIndicator.hidden = YES;
-      self.iconView.hidden = YES;
-            
+      self.iconView1.hidden = YES;
+      self.iconView2.hidden = YES;
 			// stop activity indicator
 			[self.activityIndicator stopAnimating];
             
@@ -1437,7 +1485,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 			self.finishedLabel.hidden = YES;
 			self.activityIndicator.hidden = YES;
       // show icon
-      self.iconView.hidden = NO;
+      self.iconView1.hidden = NO;
+      self.iconView2.hidden = NO;
       
 			// stop activity indicator
 			[self.activityIndicator stopAnimating];

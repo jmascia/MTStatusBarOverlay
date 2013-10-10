@@ -121,7 +121,10 @@ typedef enum MTMessageType {
 @property(nonatomic, strong) UIColor *customTextColor;
 
 // JM: for displaying user-provided custom icon image.
-@property (nonatomic, strong) UIImageView* iconView;
+@property (nonatomic, strong) UIImageView* iconView1;
+@property (nonatomic, strong) UIImageView* iconView2;
+@property (nonatomic, unsafe_unretained) UIImageView *hiddenIconView;
+@property (unsafe_unretained, nonatomic, readonly) UIImageView *visibleIconView;
 
 //===========================================================
 #pragma mark -
