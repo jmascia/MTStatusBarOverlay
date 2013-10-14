@@ -283,6 +283,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 @synthesize iconView2 = iconView2_;
 @synthesize hiddenIconView = hiddenIconView_;
 
+// JM: support different animation options
+@synthesize transitionType = transitionType_;
+
 
 ////////////////////////////////////////////////////////////////////////
 #pragma mark -
@@ -314,6 +317,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		active_ = NO;
 		hidesActivity_ = NO;
         forcedToHide_ = NO;
+      
+    // JM: Default-values
+    transitionType_ = MTTransitionTypeUp;
         
 		// the detail view that is shown when the user touches the status bar in animation mode "FallDown"
 		detailView_ = [[UIView alloc] initWithFrame:kDefaultDetailViewFrame];
@@ -830,15 +836,24 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
         // update progressView to only cover displayed text
         [self updateProgressViewSizeForLabel:self.hiddenStatusLabel];
         
-        // position hidden status label under visible status label
+        // position hidden status label for animating in
+        CGFloat topStart;
+        if (transitionType_ == MTTransitionTypeUp) {
+          topStart = kStatusBarHeight;
+        } else if (transitionType_ == MTTransitionTypeDown) {
+          topStart = (-kStatusBarHeight);
+        } else {
+          topStart = kStatusBarHeight;
+        }
+      
         self.hiddenStatusLabel.frame = CGRectMake(self.hiddenStatusLabel.frame.origin.x,
-                                                  kStatusBarHeight,
+                                                  topStart,
                                                   self.hiddenStatusLabel.frame.size.width,
                                                   self.hiddenStatusLabel.frame.size.height);
       
-        // position hidden icon view under visible icon view
+        // position hidden icon view for animating in
         self.hiddenIconView.frame = CGRectMake(self.hiddenIconView.frame.origin.x,
-                                               kStatusBarHeight,
+                                               topStart,
                                                self.hiddenIconView.frame.size.width,
                                                self.hiddenIconView.frame.size.height);
       
@@ -847,23 +862,33 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                               delay:0
                             options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionAllowUserInteraction
                          animations:^{
-                             // move both status labels up
+                           
+                            CGFloat topDisplacement;
+                            if (transitionType_ == MTTransitionTypeUp) {
+                              topDisplacement = (-kStatusBarHeight);
+                            } else if (transitionType_ == MTTransitionTypeDown) {
+                              topDisplacement = kStatusBarHeight;
+                            } else {
+                              topDisplacement = (-kStatusBarHeight);
+                            }
+                           
+                             // move both status labels
                              self.statusLabel1.frame = CGRectMake(self.statusLabel1.frame.origin.x,
-                                                                  self.statusLabel1.frame.origin.y - kStatusBarHeight,
+                                                                  self.statusLabel1.frame.origin.y + topDisplacement,
                                                                   self.statusLabel1.frame.size.width,
                                                                   self.statusLabel1.frame.size.height);
                              self.statusLabel2.frame = CGRectMake(self.statusLabel2.frame.origin.x,
-                                                                  self.statusLabel2.frame.origin.y - kStatusBarHeight,
+                                                                  self.statusLabel2.frame.origin.y + topDisplacement,
                                                                   self.statusLabel2.frame.size.width,
                                                                   self.statusLabel2.frame.size.height);
                            
-                           // move both icon views up
+                           // move both icon views
                            self.iconView1.frame = CGRectMake(self.iconView1.frame.origin.x,
-                                                             self.iconView1.frame.origin.y - kStatusBarHeight,
+                                                             self.iconView1.frame.origin.y + topDisplacement,
                                                              self.iconView1.frame.size.width,
                                                              self.iconView1.frame.size.height);
                            self.iconView2.frame = CGRectMake(self.iconView2.frame.origin.x,
-                                                             self.iconView2.frame.origin.y - kStatusBarHeight,
+                                                             self.iconView2.frame.origin.y + topDisplacement,
                                                              self.iconView2.frame.size.width,
                                                              self.iconView2.frame.size.height);
                          }
@@ -928,6 +953,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	[self.activityIndicator stopAnimating];
 	self.statusLabel1.text = @"";
 	self.statusLabel2.text = @"";
+  
+  self.iconView1.image = nil;
+  self.iconView2.image = nil;
     
 	self.hideInProgress = NO;
 	// cancel previous hide- and clear requests

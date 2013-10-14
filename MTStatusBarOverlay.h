@@ -50,6 +50,12 @@ typedef enum MTMessageType {
   MTMessageTypeIcon,       // JM: shows user-provided image
 } MTMessageType;
 
+// JM: Type constants for different transition options
+typedef enum MTTransitionType {
+  MTTransitionTypeUp,     // content rolls up
+  MTTransitionTypeDown,   // content rolls down
+} MTTransitionType;
+
 
 // keys used in the dictionary-representation of a status message
 #define kMTStatusBarOverlayMessageKey			@"MessageText"
@@ -125,6 +131,9 @@ typedef enum MTMessageType {
 @property (nonatomic, strong) UIImageView* iconView2;
 @property (nonatomic, unsafe_unretained) UIImageView *hiddenIconView;
 @property (unsafe_unretained, nonatomic, readonly) UIImageView *visibleIconView;
+
+// JM: support different animation options
+@property (nonatomic, assign) MTTransitionType transitionType;
 
 //===========================================================
 #pragma mark -
