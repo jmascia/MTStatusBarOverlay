@@ -200,6 +200,12 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 // JM: Copy of postImmediateMessage:type:duration:animated:immediate: that also handles a custom icon.
 - (void)postImmediateMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated icon:(UIImage*)icon;
 
+// SR: Copy of postMessage:type:duration:animated:immediate: that also handles a custom icon.
+- (void)postMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated immediate:(BOOL)immediate icon:(UIImage*)icon tapBlock:(MTStatusBarOverlayBlock)tapBlock;
+
+// SR: Copy of postImmediateMessage:type:duration:animated:immediate: that also handles a custom icon.
+- (void)postImmediateMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated icon:(UIImage*)icon tapBlock:(MTStatusBarOverlayBlock)tapBlock;
+
 // is called when the user touches the statusbar
 - (void)contentViewClicked:(UIGestureRecognizer *)gestureRecognizer;
 // is called when the user swipes down the statusbar
@@ -285,6 +291,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 
 // JM: support different animation options
 @synthesize transitionType = transitionType_;
+
+// SR: support block that gets excecuted as part of notification
+@synthesize tapBlock = tapBlock_;
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -629,6 +638,20 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
   [self postImmediateMessage:message type:MTMessageTypeIcon duration:duration animated:animated icon:icon];
 }
 
+// SR: Functions related to adding an icon and block associated with a notification.
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration tapBlock:(MTStatusBarOverlayBlock)tapBlock
+{
+  [self postIcon:icon message:message duration:duration animated:YES tapBlock:tapBlock];
+}
+
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated tapBlock:(MTStatusBarOverlayBlock)tapBlock{
+  [self postMessage:message type:MTMessageTypeIcon duration:duration animated:animated immediate:NO icon:icon tapBlock:tapBlock];
+}
+
+- (void)postImmediateIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated tapBlock:(MTStatusBarOverlayBlock)tapBlock{
+  [self postImmediateMessage:message type:MTMessageTypeIcon duration:duration animated:animated icon:icon tapBlock:tapBlock];
+}
+
 - (void)postMessageDictionary:(NSDictionary *)messageDictionary {
     [self postMessage:[messageDictionary valueForKey:kMTStatusBarOverlayMessageKey]
                  type:[[messageDictionary valueForKey:kMTStatusBarOverlayMessageTypeKey] intValue]
@@ -740,6 +763,65 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	[self postMessage:message type:messageType duration:duration animated:animated immediate:YES icon:icon];
 }
 
+// SR: Copy of postMessage:type:duration:animated:immediate: that also handles a custom icon and tap block.
+- (void)postMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated immediate:(BOOL)immediate icon:(UIImage*)icon tapBlock:(MTStatusBarOverlayBlock)tapBlock{
+  mt_dispatch_sync_on_main_thread(^{
+    // don't add to queue when message is empty
+    if (message.length == 0) {
+      return;
+    }
+    
+    NSMutableDictionary* mutableMessageDictionaryRepresentation = [NSMutableDictionary dictionaryWithObjectsAndKeys:message, kMTStatusBarOverlayMessageKey,
+                                                                   [NSNumber numberWithInt:messageType], kMTStatusBarOverlayMessageTypeKey,
+                                                                   [NSNumber numberWithDouble:duration], kMTStatusBarOverlayDurationKey,
+                                                                   [NSNumber numberWithBool:animated],  kMTStatusBarOverlayAnimationKey,
+                                                                   [NSNumber numberWithBool:immediate], kMTStatusBarOverlayImmediateKey, nil];
+    
+    if (icon != nil) {
+      [mutableMessageDictionaryRepresentation setValue:icon forKey:kMTStatusBarOverlayIconKey];
+    }
+    
+    if (tapBlock != nil) {
+      [mutableMessageDictionaryRepresentation setValue:tapBlock forKey:kMTStatusBarOverlayBlockKey];
+    }
+    
+    NSDictionary *messageDictionaryRepresentation = [NSDictionary dictionaryWithDictionary:mutableMessageDictionaryRepresentation];
+    
+    
+    @synchronized (self.messageQueue) {
+      [self.messageQueue insertObject:messageDictionaryRepresentation atIndex:0];
+    }
+    
+    // if the overlay is currently not active, begin with showing of messages
+    if (!self.active) {
+      [self showNextMessage];
+    }
+  });
+}
+
+// SR: Copy of postImmediateMessage:type:duration:animated:immediate: that also handles a custom icon and tap block.
+- (void)postImmediateMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated icon:(UIImage*)icon tapBlock:(MTStatusBarOverlayBlock)tapBlock{
+	@synchronized(self.messageQueue) {
+		NSMutableArray *clearedMessages = [NSMutableArray array];
+    
+		for (id messageDictionary in self.messageQueue) {
+			if (messageDictionary != [self.messageQueue lastObject] &&
+          (self.canRemoveImmediateMessagesFromQueue || [[messageDictionary valueForKey:kMTStatusBarOverlayImmediateKey] boolValue] == NO)) {
+				[clearedMessages addObject:messageDictionary];
+			}
+		}
+    
+		[self.messageQueue removeObjectsInArray:clearedMessages];
+    
+		// call delegate
+		if ([self.delegate respondsToSelector:@selector(statusBarOverlayDidClearMessageQueue:)] && clearedMessages.count > 0) {
+			[self.delegate statusBarOverlayDidClearMessageQueue:clearedMessages];
+		}
+	}
+  
+	[self postMessage:message type:messageType duration:duration animated:animated immediate:YES icon:icon tapBlock:tapBlock];
+}
+
 ////////////////////////////////////////////////////////////////////////
 #pragma mark -
 #pragma mark Showing Next Message
@@ -829,6 +911,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
         if (messageType == MTMessageTypeIcon) {
           UIImage* icon = [nextMessageDictionary valueForKey:kMTStatusBarOverlayIconKey];
           self.hiddenIconView.image = icon;
+          
+          // SR: also set the tap block here too
+          tapBlock_ = [nextMessageDictionary valueForKey:kMTStatusBarOverlayBlockKey];
         }
       
         // set text of currently not visible label to new text
@@ -1301,7 +1386,12 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                     [self setDetailViewHidden:!self.detailViewHidden animated:YES];
                     break;
                 case MTStatusBarOverlayAnimationNone:
-                    // ignore
+                    // perform tapBlock if available and hide oneself
+                    if(self.tapBlock != nil)
+                    {
+                      self.tapBlock();
+                    }
+                    [self hide];
                     break;
             }
         }

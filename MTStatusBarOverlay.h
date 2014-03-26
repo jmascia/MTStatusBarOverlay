@@ -64,6 +64,10 @@ typedef enum MTTransitionType {
 #define kMTStatusBarOverlayAnimationKey			@"MessageAnimation"
 #define kMTStatusBarOverlayImmediateKey			@"MessageImmediate"
 #define kMTStatusBarOverlayIconKey          @"MessageIcon"          // JM: User-supplied icon.
+#define kMTStatusBarOverlayBlockKey         @"MessageBlock"         // SR: User-supplied block on tap.
+
+// SR: Typedef for block
+typedef void(^MTStatusBarOverlayBlock)(void);
 
 // keys used for saving state to NSUserDefaults
 #define kMTStatusBarOverlayStateShrinked        @"kMTStatusBarOverlayStateShrinked"
@@ -135,6 +139,9 @@ typedef enum MTTransitionType {
 // JM: support different animation options
 @property (nonatomic, assign) MTTransitionType transitionType;
 
+// SR: support for pointing to a block that is associated with taping notification
+@property (nonatomic, copy) MTStatusBarOverlayBlock tapBlock;
+
 //===========================================================
 #pragma mark -
 #pragma mark Class Methods
@@ -184,6 +191,10 @@ typedef enum MTTransitionType {
 // clears the message queue and shows this message instantly
 - (void)postImmediateIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated;
 
+// SR: shows a user-supplied icon instead of the activity indicator and hides the status bar after the specified duration
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration tapBlock:(MTStatusBarOverlayBlock)tapBlock;
+- (void)postIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated tapBlock:(MTStatusBarOverlayBlock)tapBlock;
+- (void)postImmediateIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated tapBlock:(MTStatusBarOverlayBlock)tapBlock;
 
 // hides the status bar overlay and resets it
 - (void)hide;
