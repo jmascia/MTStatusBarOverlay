@@ -139,7 +139,7 @@ typedef void(^MTStatusBarOverlayBlock)(void);
 // JM: support different animation options
 @property (nonatomic, assign) MTTransitionType transitionType;
 
-// SR: support for pointing to a block that is associated with taping notification
+// SR: support for pointing to a block that is associated with tapping notification
 @property (nonatomic, copy) MTStatusBarOverlayBlock tapBlock;
 
 //===========================================================

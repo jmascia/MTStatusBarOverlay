@@ -200,10 +200,10 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 // JM: Copy of postImmediateMessage:type:duration:animated:immediate: that also handles a custom icon.
 - (void)postImmediateMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated icon:(UIImage*)icon;
 
-// SR: Copy of postMessage:type:duration:animated:immediate: that also handles a custom icon.
+// SR: Copy of postMessage:type:duration:animated:immediate:icon: that also handles a custom tap block.
 - (void)postMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated immediate:(BOOL)immediate icon:(UIImage*)icon tapBlock:(MTStatusBarOverlayBlock)tapBlock;
 
-// SR: Copy of postImmediateMessage:type:duration:animated:immediate: that also handles a custom icon.
+// SR: Copy of postImmediateMessage:type:duration:animated:immediate:icon: that also handles a custom tap block.
 - (void)postImmediateMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated icon:(UIImage*)icon tapBlock:(MTStatusBarOverlayBlock)tapBlock;
 
 // is called when the user touches the statusbar
@@ -914,6 +914,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
           
           // SR: also set the tap block here too
           tapBlock_ = [nextMessageDictionary valueForKey:kMTStatusBarOverlayBlockKey];
+        } else {
+          tapBlock_ = nil;
         }
       
         // set text of currently not visible label to new text
@@ -978,16 +980,16 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                                                              self.iconView2.frame.size.height);
                          }
                          completion:^(BOOL finished) {
-                             // add old message to history
-                             [self addMessageToHistory:self.visibleStatusLabel.text];
-                             
-                             // after animation, set new hidden status label indicator
-                             if (self.hiddenStatusLabel == self.statusLabel1) {
-                                 self.hiddenStatusLabel = self.statusLabel2;
-                             } else {
-                                 self.hiddenStatusLabel = self.statusLabel1;
-                             }
-
+                           // add old message to history
+                           [self addMessageToHistory:self.visibleStatusLabel.text];
+                           
+                           // after animation, set new hidden status label indicator
+                           if (self.hiddenStatusLabel == self.statusLabel1) {
+                             self.hiddenStatusLabel = self.statusLabel2;
+                           } else {
+                             self.hiddenStatusLabel = self.statusLabel1;
+                           }
+                           
                            // after animation, set new hidden icon view indicator
                            if (self.hiddenIconView == self.iconView1) {
                              self.hiddenIconView = self.iconView2;
@@ -995,42 +997,54 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                              self.hiddenIconView = self.iconView1;
                            }
                            
-                             // remove the message from the queue
-                             @synchronized(self.messageQueue) {
-                                 if (self.messageQueue.count > 0)
-                                     [self.messageQueue removeLastObject];
-                             }
-                             
-                             // inform delegate about message-switch
-                             [self callDelegateWithNewMessage:message];
-                             
-                             // show the next message
-                             [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:kMinimumMessageVisibleTime];
+                           // remove the message from the queue
+                           @synchronized(self.messageQueue) {
+                             if (self.messageQueue.count > 0)
+                               [self.messageQueue removeLastObject];
+                           }
+                           
+                           // inform delegate about message-switch
+                           [self callDelegateWithNewMessage:message];
+                           
+                           // show the next message
+                           [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:kMinimumMessageVisibleTime];
                          }];
     }
-    
+  
     // w/o animation just save old text and set new one
     else {
-        // add old message to history
-        [self addMessageToHistory:self.visibleStatusLabel.text];
-        // set new text
-        self.visibleStatusLabel.text = message;
-        // update progressView to only cover displayed text
-        [self updateProgressViewSizeForLabel:self.visibleStatusLabel];
+      // add old message to history
+      [self addMessageToHistory:self.visibleStatusLabel.text];
+      // set new text
+      self.visibleStatusLabel.text = message;
+      
+      // JM: if it's an icon type message, then set the icon to the imageView
+      if (messageType == MTMessageTypeIcon) {
+        UIImage* icon = [nextMessageDictionary valueForKey:kMTStatusBarOverlayIconKey];
+        self.visibleIconView.image = icon;
         
-        // remove the message from the queue
-        @synchronized(self.messageQueue) {
-            if (self.messageQueue.count > 0)
-                [self.messageQueue removeLastObject];
-        }
-        
-        // inform delegate about message-switch
-        [self callDelegateWithNewMessage:message];
-        
-        // show next message
-        [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:kMinimumMessageVisibleTime];
+        // SR: also set the tap block here too
+        tapBlock_ = [nextMessageDictionary valueForKey:kMTStatusBarOverlayBlockKey];
+      } else {
+        tapBlock_ = nil;
+      }
+      
+      // update progressView to only cover displayed text
+      [self updateProgressViewSizeForLabel:self.visibleStatusLabel];
+      
+      // remove the message from the queue
+      @synchronized(self.messageQueue) {
+        if (self.messageQueue.count > 0)
+          [self.messageQueue removeLastObject];
+      }
+      
+      // inform delegate about message-switch
+      [self callDelegateWithNewMessage:message];
+      
+      // show next message
+      [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:kMinimumMessageVisibleTime];
     }
-    
+  
     self.lastPostedMessage = message;
 }
 
@@ -1041,6 +1055,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
   
   self.iconView1.image = nil;
   self.iconView2.image = nil;
+  
+  self.tapBlock = nil;
     
 	self.hideInProgress = NO;
 	// cancel previous hide- and clear requests
