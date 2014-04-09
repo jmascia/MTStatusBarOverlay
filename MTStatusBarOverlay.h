@@ -52,8 +52,9 @@ typedef enum MTMessageType {
 
 // JM: Type constants for different transition options
 typedef enum MTTransitionType {
-  MTTransitionTypeUp,     // content rolls up
-  MTTransitionTypeDown,   // content rolls down
+  MTTransitionTypeMsgSlideUp,     // messages roll up
+  MTTransitionTypeMsgSlideDown,   // messages roll down
+  MTTransitionTypeOverlayInOut,   // overlay drops in, messages replace eachother
 } MTTransitionType;
 
 
@@ -136,6 +137,13 @@ typedef void(^MTStatusBarOverlayBlock)(void);
 @property (nonatomic, unsafe_unretained) UIImageView *hiddenIconView;
 @property (unsafe_unretained, nonatomic, readonly) UIImageView *visibleIconView;
 
+// JM: allow customizing height
+@property (nonatomic, assign) float customOverlayHeight;
+// JM: allow customizing animation timing
+@property (nonatomic, assign) float customAppearAnimationDuration;
+@property (nonatomic, assign) float customNextStatusAnimationDuration;
+@property (nonatomic, assign) float customMinimumMessageVisibleTime;
+
 // JM: support different animation options
 @property (nonatomic, assign) MTTransitionType transitionType;
 
@@ -197,7 +205,8 @@ typedef void(^MTStatusBarOverlayBlock)(void);
 - (void)postImmediateIcon:(UIImage*)icon message:(NSString *)message duration:(NSTimeInterval)duration animated:(BOOL)animated tapBlock:(MTStatusBarOverlayBlock)tapBlock;
 
 // hides the status bar overlay and resets it
-- (void)hide;
+// JM: allow specifying different types of 'hide' transitions
+- (void)hide:(NSString*)type;
 // hides the status bar overlay but doesn't reset it's values
 // this is useful if e.g. you have a screen where you don't have
 // a status bar, but the other screens have one
@@ -211,6 +220,10 @@ typedef void(^MTStatusBarOverlayBlock)(void);
 - (void)saveStateSynchronized:(BOOL)synchronizeAtEnd;
 // restores the state from NSUserDefaults
 - (void)restoreState;
+
+// JM: updates the layout of the overlay and it's subviews (based on layout logic in init).
+// To be called after custom properties changed, such as overlay height.
+- (void)updateLayout;
 
 @end
 

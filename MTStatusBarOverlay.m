@@ -179,13 +179,25 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 @property (assign, getter=isHideInProgress) BOOL hideInProgress;
 @property (assign, getter=isActive) BOOL active;
 // read out hidden-state using alpha-value and hidden-property
-@property (nonatomic, readonly, getter=isReallyHidden) BOOL reallyHidden;
+@property (nonatomic, readonly, getter=isStatedHidden) BOOL statedHidden;
 @property (nonatomic, strong) UITextView *detailTextView;
 @property (nonatomic, strong) NSMutableArray *messageQueue;
 // overwrite property for read-write-access
 @property (nonatomic, strong) NSMutableArray *messageHistory;
 @property (nonatomic, strong) UITableView *historyTableView;
 @property (nonatomic, assign) BOOL forcedToHide;
+
+// JM: Read whether completely hidden based on presentationLayer's opacity value (reflects current state of in-progress animation).
+@property (nonatomic, readonly, getter = isFullyHidden) BOOL fullyHidden;
+// JM: Read whether partly hidden (includes fullyHidden case) based on presentationLayer's opacity value (reflects current state of in-progress animation).
+@property (nonatomic, readonly, getter = isPartlyHidden) BOOL partlyHidden;
+// JM: Read whether set to be offscreen based on frame (reflects final state of in-progress animation)
+@property (nonatomic, readonly, getter = isStatedOffscreen) BOOL statedOffscreen;
+// JM: Read whether completely offscreen based on presentationLayer's frame (reflects current state of in-progress animation).
+@property (nonatomic, readonly, getter = isFullyOffscreen) BOOL fullyOffscreen;
+// JM: Read whether partly offscreen (includes fullOffscreen case) based on presentationLayer's opacity frame (reflects current state of in-progress animation).
+@property (nonatomic, readonly, getter = isPartlyOffscreen) BOOL partlyOffscreen;
+
 
 // intern method that posts a new entry to the message-queue
 - (void)postMessage:(NSString *)message type:(MTMessageType)messageType duration:(NSTimeInterval)duration animated:(BOOL)animated immediate:(BOOL)immediate;
@@ -289,8 +301,12 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 @synthesize iconView2 = iconView2_;
 @synthesize hiddenIconView = hiddenIconView_;
 
-// JM: support different animation options
+// JM: support different layout and animation options
 @synthesize transitionType = transitionType_;
+@synthesize customOverlayHeight = customOverlayHeight_;
+@synthesize customAppearAnimationDuration = customAppearAnimationDuration_;
+@synthesize customNextStatusAnimationDuration = customNextStatusAnimationDuration_;
+@synthesize customMinimumMessageVisibleTime = customMinimumMessageVisibleTime_;
 
 // SR: support block that gets excecuted as part of notification
 @synthesize tapBlock = tapBlock_;
@@ -303,8 +319,14 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 
 - (id)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        CGRect statusBarFrame = [UIApplication sharedApplication].statusBarFrame;
-        
+    
+    // JM: Initialize custom animation properties
+    customAppearAnimationDuration_ = kAppearAnimationDuration;
+    customNextStatusAnimationDuration_ = kNextStatusAnimationDuration;
+    customMinimumMessageVisibleTime_ = kMinimumMessageVisibleTime;
+      
+    CGRect statusBarFrame = [UIApplication sharedApplication].statusBarFrame;
+      
 		// only use height of 20px even is status bar is doubled
 		statusBarFrame.size.height = statusBarFrame.size.height == 2*kStatusBarHeight ? kStatusBarHeight : statusBarFrame.size.height;
 		// if we are on the iPad but in iPhone-Mode (non-universal-app) correct the width
@@ -313,8 +335,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		}
         
 		// Place the window on the correct level and position
-        self.windowLevel = UIWindowLevelStatusBar+1.f;
-        self.frame = statusBarFrame;
+    self.windowLevel = UIWindowLevelStatusBar+1.f;
+    self.frame = statusBarFrame;
 		self.alpha = 0.f;
 		self.hidden = NO;
         
@@ -328,7 +350,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
         forcedToHide_ = NO;
       
     // JM: Default-values
-    transitionType_ = MTTransitionTypeUp;
+    transitionType_ = MTTransitionTypeMsgSlideUp;
+    customOverlayHeight_ = kStatusBarHeight;
         
 		// the detail view that is shown when the user touches the status bar in animation mode "FallDown"
 		detailView_ = [[UIView alloc] initWithFrame:kDefaultDetailViewFrame];
@@ -348,8 +371,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
          detailView_.layer.shadowOffset = CGSizeMake(0, 3);*/
         
 		// Detail Text label
-		detailTextView_ = [[UITextView alloc] initWithFrame:CGRectMake(0, kStatusBarHeight,
-                                                                       kDefaultDetailViewFrame.size.width, kDefaultDetailViewFrame.size.height - kStatusBarHeight)];
+		detailTextView_ = [[UITextView alloc] initWithFrame:CGRectMake(0, customOverlayHeight_,
+                                                                       kDefaultDetailViewFrame.size.width, kDefaultDetailViewFrame.size.height - customOverlayHeight_)];
 		detailTextView_.backgroundColor = [UIColor clearColor];
         detailTextView_.userInteractionEnabled = NO;
 		detailTextView_.hidden = detailViewMode_ != MTDetailViewModeDetailText;
@@ -358,8 +381,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		// Message History
 		messageHistory_ = [[NSMutableArray alloc] init];
         
-		historyTableView_ = [[UITableView alloc] initWithFrame:CGRectMake(0, kStatusBarHeight,
-																		  kDefaultDetailViewFrame.size.width, kDefaultDetailViewFrame.size.height - kStatusBarHeight)];
+		historyTableView_ = [[UITableView alloc] initWithFrame:CGRectMake(0, customOverlayHeight_,
+																		  kDefaultDetailViewFrame.size.width, kDefaultDetailViewFrame.size.height - customOverlayHeight_)];
 		historyTableView_.dataSource = self;
 		historyTableView_.delegate = nil;
 		historyTableView_.rowHeight = kHistoryTableRowHeight;
@@ -373,13 +396,16 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		[detailView_ addSubview:historyTableView_];
 		[self addSubview:detailView_];
         
-        // Create view that stores all the content
-        CGRect backgroundFrame = [self backgroundViewFrameForStatusBarInterfaceOrientation];
-        backgroundView_ = [[UIView alloc] initWithFrame:backgroundFrame];
+    // Create view that stores all the content
+    CGRect backgroundFrame = [self backgroundViewFrameForStatusBarInterfaceOrientation];
+    // JM: Start with backgroundView positioned offscreen so animation works correctly the first time.
+    backgroundFrame.origin.y = -CGRectGetHeight(backgroundFrame);
+      
+    backgroundView_ = [[UIView alloc] initWithFrame:backgroundFrame];
 		backgroundView_.clipsToBounds = YES;
 		backgroundView_.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        oldBackgroundViewFrame_ = backgroundView_.frame;
-        
+    oldBackgroundViewFrame_ = backgroundView_.frame;
+    
 		// Add gesture recognizers
 		UITapGestureRecognizer *tapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(contentViewClicked:)];
 		//UISwipeGestureRecognizer *upGestureRecognizer = [[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(contentViewSwipedUp:)] autorelease];
@@ -397,7 +423,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		defaultStatusBarImageShrinked_ = [UIImage imageWithData:MTStatusBarBackgroundImageData(YES)];
         
 		// Background-Image of the Content View
-		statusBarBackgroundImageView_ = [[UIImageView alloc] initWithFrame:backgroundView_.frame];
+		statusBarBackgroundImageView_ = [[UIImageView alloc] initWithFrame:backgroundView_.bounds];
 		statusBarBackgroundImageView_.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 		[self addSubviewToBackgroundView:statusBarBackgroundImageView_];
         
@@ -445,7 +471,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		[self addSubviewToBackgroundView:statusLabel1_];
         
 		// Status Label 2 is hidden
-		statusLabel2_ = [[UILabel alloc] initWithFrame:CGRectMake(30.f, backgroundView_.frame.size.height,backgroundView_.frame.size.width - 60.f , backgroundView_.frame.size.height-1.f)];
+		statusLabel2_ = [[UILabel alloc] initWithFrame:CGRectMake(30.f, 0.f,backgroundView_.frame.size.width - 60.f , backgroundView_.frame.size.height-1.f)];
 		statusLabel2_.shadowOffset = CGSizeMake(0.f, 1.f);
 		statusLabel2_.backgroundColor = [UIColor clearColor];
 		statusLabel2_.font = [UIFont boldSystemFontOfSize:kStatusLabelSize];
@@ -465,7 +491,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 
     // JM: Icon ImageViews.
     // Icon View 1 is first visible
-    iconView1_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f, backgroundView_.frame.size.height, backgroundView_.frame.size.height-1.f)];
+    iconView1_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f, 20.f, backgroundView_.frame.size.height-1.f)];
     iconView1_.clipsToBounds = NO;
     iconView1_.contentMode = UIViewContentModeCenter;
     iconView1_.backgroundColor = [UIColor clearColor];
@@ -473,7 +499,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
     [self addSubviewToBackgroundView:iconView1_];
 
     // Icon View 2 is hidden
-    iconView2_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f + backgroundView_.frame.size.height, backgroundView_.frame.size.height, backgroundView_.frame.size.height-1.f)];
+    iconView2_ = [[UIImageView alloc] initWithFrame:CGRectMake(4.f, 1.f, 20.f, backgroundView_.frame.size.height-1.f)];
     iconView2_.clipsToBounds = NO;
     iconView2_.contentMode = UIViewContentModeCenter;
     iconView2_.backgroundColor = [UIColor clearColor];
@@ -543,6 +569,50 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 - (void)addSubviewToBackgroundView:(UIView *)view atIndex:(NSInteger)index {
 	view.userInteractionEnabled = NO;
 	[self.backgroundView insertSubview:view atIndex:index];
+}
+
+
+- (void)updateLayout {
+  
+  // Update historyTable layout
+  float y = -(kMaxHistoryTableRowCount - MIN(self.messageHistory.count, kMaxHistoryTableRowCount)) * kHistoryTableRowHeight;
+  CGRect historyTableFrame = self.historyTableView.frame;
+  historyTableFrame.origin.y = customOverlayHeight_ - y;
+  self.historyTableView.frame = historyTableFrame;
+  
+  // Update detailView layout
+  CGRect detailViewFrame = self.detailView.frame;
+  if (self.detailViewMode == MTDetailViewModeDetailText) {
+    detailViewFrame.size.height = self.detailTextView.frame.size.height + customOverlayHeight_;
+  } else {
+    detailViewFrame.size.height = kDefaultDetailViewFrame.size.height;
+  }
+  self.detailView.frame = detailViewFrame;
+  
+  // Calling rotateToStatusBarFrame does re-layout for the overlay and backgroundView.
+  [self rotateToStatusBarFrame:nil];
+  
+  CGRect finishedLabelFrame = finishedLabel_.frame;
+  finishedLabelFrame.size.height = backgroundView_.frame.size.height-1.f;
+  finishedLabel_.frame = finishedLabelFrame;
+  
+  CGRect statusLabel1Frame = statusLabel1_.frame;
+  statusLabel1Frame.size.height = backgroundView_.frame.size.height-1.f;
+  statusLabel1_.frame = statusLabel1Frame;
+  
+  CGRect statusLabel2Frame = statusLabel2_.frame;
+  statusLabel2Frame.size.height = backgroundView_.frame.size.height-1.f;
+  statusLabel2_.frame = statusLabel2Frame;
+  
+  CGRect iconView1Frame = iconView1_.frame;
+  iconView1Frame.size.height = backgroundView_.frame.size.height-1.f;
+  iconView1_.frame = iconView1Frame;
+
+  CGRect iconView2Frame = iconView2_.frame;
+  iconView2Frame.size.height = backgroundView_.frame.size.height-1.f;
+  iconView2_.frame = iconView2Frame;
+  
+  progressView_.frame = statusBarBackgroundImageView_.frame;
 }
 
 
@@ -867,7 +937,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	}
     
 	// don't duplicate animation if already displaying with text
-	if (!self.reallyHidden && [self.visibleStatusLabel.text isEqualToString:message]) {
+	if (!self.isStatedHidden && !self.isStatedOffscreen && [self.visibleStatusLabel.text isEqualToString:message]) {
 		// remove unneccesary message
 		@synchronized(self.messageQueue) {
             if (self.messageQueue.count > 0)
@@ -880,8 +950,10 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		return;
 	}
     
-	// cancel previous hide- and clear requests
-	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide) object:nil];
+	// cancel previous hide- and clear requests. JM: must account for all possible hide: types
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide:) object:nil];
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide:) object:@"slide"];
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide:) object:@"fade"];
 	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(clearHistory) object:nil];
     
 	// update UI depending on current status bar style
@@ -889,24 +961,109 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	[self setStatusBarBackgroundForStyle:statusBarStyle];
 	[self setColorSchemeForStatusBarStyle:statusBarStyle messageType:messageType];
 	[self updateUIForMessageType:messageType duration:duration];
-    
-	// if status bar is currently hidden, show it unless it is forced to hide
-	if (self.reallyHidden) {
-		// clear currently visible status label
-		self.visibleStatusLabel.text = @"";
-    // clear currently visible icon view
-    self.visibleIconView.image = nil;
-        
-		// show status bar overlay with animation
-		[UIView animateWithDuration:self.shrinked ? 0 : kAppearAnimationDuration
-						 animations:^{
-							 [self setHidden:NO useAlpha:YES];
-						 }];
-	}
-    
-    
+  
+  // MTTransitionTypeOverlayInOut: Overlay slides down from above the screen
+  if (transitionType_ == MTTransitionTypeOverlayInOut) {
+  
+    // JM: If the overlay is fully off the screen, then begin with it visible and slide it down.
+    if (self.fullyOffscreen) {
+      
+      [self setHidden:NO useAlpha:YES];
+      animated = NO;
+      
+      // clear currently visible status label
+      self.visibleStatusLabel.text = @"";
+      // clear currently visible icon view
+      self.visibleIconView.image = nil;
+      
+      // show status bar overlay with animation
+      [UIView animateWithDuration:self.shrinked ? 0 : customAppearAnimationDuration_
+                            delay:0.0
+                          options:UIViewAnimationOptionCurveEaseInOut
+                       animations:^{
+                         [self setOffscreen:NO];
+                       }
+                       completion:nil];
+    }
+    // JM: If the overlay is partly hidden or partly offscreen then animate reversal of respective property.
+    else {
+      if (self.partlyHidden) {
+        // show status bar overlay with animation
+        [UIView animateWithDuration:self.shrinked ? 0 : customAppearAnimationDuration_
+                              delay:0.0
+                            options:UIViewAnimationOptionBeginFromCurrentState
+                         animations:^{
+                           [self setHidden:NO useAlpha:YES];
+                         }
+                         completion:nil];
+      }
+      
+      if (self.partlyOffscreen) {
+        // show status bar overlay with animation
+        [UIView animateWithDuration:self.shrinked ? 0 : customAppearAnimationDuration_
+                              delay:0.0
+                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut
+                         animations:^{
+                           [self setOffscreen:NO];
+                         }
+                         completion:nil];
+      }
+    }
+  }
+  // MTTransitionTypeMsgSlideUp or MTTransitionTypeMsgSlideDown: Overlay fades in.
+  else {
+  
+    // JM: If the overlay is fully hidden, then begin with it offscreen and fade it in.
+    if (self.fullyHidden) {
+      
+      [self setOffscreen:NO];
+      animated = NO;
+      
+      // clear currently visible status label
+      self.visibleStatusLabel.text = @"";
+      // clear currently visible icon view
+      self.visibleIconView.image = nil;
+      
+      // show status bar overlay with animation
+      [UIView animateWithDuration:self.shrinked ? 0 : customAppearAnimationDuration_
+                            delay:0.0
+                          options:UIViewAnimationOptionCurveLinear
+                       animations:^{
+                         [self setHidden:NO useAlpha:YES];
+                       }
+                       completion:nil];
+    }
+    // JM: If the overlay is partly hidden or partly offscreen then animate reversal of respective property.
+    else {
+      if (self.partlyHidden) {
+        // show status bar overlay with fade animation
+        [UIView animateWithDuration:self.shrinked ? 0 : customAppearAnimationDuration_
+                              delay:0.0
+                            options:UIViewAnimationOptionBeginFromCurrentState
+                         animations:^{
+                           [self setHidden:NO useAlpha:YES];
+                         }
+                         completion:nil];
+      }
+      
+      if (self.partlyOffscreen) {
+        // show status bar overlay with slide animation
+        [UIView animateWithDuration:self.shrinked ? 0 : customAppearAnimationDuration_
+                              delay:0.0
+                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut
+                         animations:^{
+                            [self setOffscreen:NO];
+                         }
+                         completion:nil];
+      }
+    }
+  }
+  
     if (animated) {
       
+      // MTTransitionTypeOverlayInOut: Current status fades out, then next status fades in.
+      if (transitionType_ == MTTransitionTypeOverlayInOut) {
+        
         // JM: if it's an icon type message, then set the icon to the imageView
         if (messageType == MTMessageTypeIcon) {
           UIImage* icon = [nextMessageDictionary valueForKey:kMTStatusBarOverlayIconKey];
@@ -917,7 +1074,84 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
         } else {
           tapBlock_ = nil;
         }
-      
+        
+        // set text of currently not visible label to new text
+        self.hiddenStatusLabel.text = message;
+        // update progressView to only cover displayed text
+        [self updateProgressViewSizeForLabel:self.hiddenStatusLabel];
+        
+        self.hiddenStatusLabel.alpha = 0.0;
+        self.hiddenIconView.alpha = 0.0;
+        
+        // animate hidden label into user view and visible status label out of view
+        [UIView animateWithDuration:(customNextStatusAnimationDuration_ / 2.0)
+                              delay:0
+                            options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction
+                         animations:^{
+                           
+                           self.visibleStatusLabel.alpha = 0.0;
+                           self.visibleIconView.alpha = 0.0;
+                           
+                         }
+                         completion:^(BOOL finished) {
+                           
+                           // animate hidden label into user view and visible status label out of view
+                           [UIView animateWithDuration:(customNextStatusAnimationDuration_ / 2.0)
+                                                 delay:0
+                                               options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionAllowUserInteraction
+                                            animations:^{
+                                              
+                                              self.hiddenStatusLabel.alpha = 1.0;
+                                              self.hiddenIconView.alpha = 1.0;
+                                              
+                                            }
+                                            completion:^(BOOL finished) {
+                                              // add old message to history
+                                              [self addMessageToHistory:self.visibleStatusLabel.text];
+                                              
+                                              // after animation, set new hidden status label indicator
+                                              if (self.hiddenStatusLabel == self.statusLabel1) {
+                                                self.hiddenStatusLabel = self.statusLabel2;
+                                              } else {
+                                                self.hiddenStatusLabel = self.statusLabel1;
+                                              }
+                                              
+                                              // after animation, set new hidden icon view indicator
+                                              if (self.hiddenIconView == self.iconView1) {
+                                                self.hiddenIconView = self.iconView2;
+                                              } else {
+                                                self.hiddenIconView = self.iconView1;
+                                              }
+                                              
+                                              // remove the message from the queue
+                                              @synchronized(self.messageQueue) {
+                                                if (self.messageQueue.count > 0)
+                                                  [self.messageQueue removeLastObject];
+                                              }
+                                              
+                                              // inform delegate about message-switch
+                                              [self callDelegateWithNewMessage:message];
+                                              
+                                              // show the next message
+                                              [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:customMinimumMessageVisibleTime_];
+                                            }];
+                           
+                         }];
+      }
+      // MTTransitionTypeMsgSlideUp or MTTransitionTypeMsgSlideDown: Current status status slides out while next status slides in.
+      else {
+        
+        // JM: if it's an icon type message, then set the icon to the imageView
+        if (messageType == MTMessageTypeIcon) {
+          UIImage* icon = [nextMessageDictionary valueForKey:kMTStatusBarOverlayIconKey];
+          self.hiddenIconView.image = icon;
+          
+          // SR: also set the tap block here too
+          tapBlock_ = [nextMessageDictionary valueForKey:kMTStatusBarOverlayBlockKey];
+        } else {
+          tapBlock_ = nil;
+        }
+        
         // set text of currently not visible label to new text
         self.hiddenStatusLabel.text = message;
         // update progressView to only cover displayed text
@@ -925,49 +1159,49 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
         
         // position hidden status label for animating in
         CGFloat topStart;
-        if (transitionType_ == MTTransitionTypeUp) {
-          topStart = kStatusBarHeight;
-        } else if (transitionType_ == MTTransitionTypeDown) {
-          topStart = (-kStatusBarHeight);
+        if (transitionType_ == MTTransitionTypeMsgSlideUp) {
+          topStart = customOverlayHeight_;
+        } else if (transitionType_ == MTTransitionTypeMsgSlideDown) {
+          topStart = (-customOverlayHeight_);
         } else {
-          topStart = kStatusBarHeight;
+          topStart = customOverlayHeight_;
         }
-      
+        
         self.hiddenStatusLabel.frame = CGRectMake(self.hiddenStatusLabel.frame.origin.x,
                                                   topStart,
                                                   self.hiddenStatusLabel.frame.size.width,
                                                   self.hiddenStatusLabel.frame.size.height);
-      
+        
         // position hidden icon view for animating in
         self.hiddenIconView.frame = CGRectMake(self.hiddenIconView.frame.origin.x,
                                                topStart,
                                                self.hiddenIconView.frame.size.width,
                                                self.hiddenIconView.frame.size.height);
-      
+
         // animate hidden label into user view and visible status label out of view
-        [UIView animateWithDuration:kNextStatusAnimationDuration
+        [UIView animateWithDuration:customNextStatusAnimationDuration_
                               delay:0
                             options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionAllowUserInteraction
                          animations:^{
                            
-                            CGFloat topDisplacement;
-                            if (transitionType_ == MTTransitionTypeUp) {
-                              topDisplacement = (-kStatusBarHeight);
-                            } else if (transitionType_ == MTTransitionTypeDown) {
-                              topDisplacement = kStatusBarHeight;
-                            } else {
-                              topDisplacement = (-kStatusBarHeight);
-                            }
+                           CGFloat topDisplacement;
+                           if (transitionType_ == MTTransitionTypeMsgSlideUp) {
+                             topDisplacement = (-customOverlayHeight_);
+                           } else if (transitionType_ == MTTransitionTypeMsgSlideDown) {
+                             topDisplacement = customOverlayHeight_;
+                           } else {
+                             topDisplacement = (-customOverlayHeight_);
+                           }
                            
-                             // move both status labels
-                             self.statusLabel1.frame = CGRectMake(self.statusLabel1.frame.origin.x,
-                                                                  self.statusLabel1.frame.origin.y + topDisplacement,
-                                                                  self.statusLabel1.frame.size.width,
-                                                                  self.statusLabel1.frame.size.height);
-                             self.statusLabel2.frame = CGRectMake(self.statusLabel2.frame.origin.x,
-                                                                  self.statusLabel2.frame.origin.y + topDisplacement,
-                                                                  self.statusLabel2.frame.size.width,
-                                                                  self.statusLabel2.frame.size.height);
+                           // move both status labels
+                           self.statusLabel1.frame = CGRectMake(self.statusLabel1.frame.origin.x,
+                                                                self.statusLabel1.frame.origin.y + topDisplacement,
+                                                                self.statusLabel1.frame.size.width,
+                                                                self.statusLabel1.frame.size.height);
+                           self.statusLabel2.frame = CGRectMake(self.statusLabel2.frame.origin.x,
+                                                                self.statusLabel2.frame.origin.y + topDisplacement,
+                                                                self.statusLabel2.frame.size.width,
+                                                                self.statusLabel2.frame.size.height);
                            
                            // move both icon views
                            self.iconView1.frame = CGRectMake(self.iconView1.frame.origin.x,
@@ -1007,8 +1241,9 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                            [self callDelegateWithNewMessage:message];
                            
                            // show the next message
-                           [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:kMinimumMessageVisibleTime];
+                           [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:customMinimumMessageVisibleTime_];
                          }];
+      }
     }
   
     // w/o animation just save old text and set new one
@@ -1042,59 +1277,113 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
       [self callDelegateWithNewMessage:message];
       
       // show next message
-      [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:kMinimumMessageVisibleTime];
+      [self performSelector:@selector(showNextMessage) withObject:nil afterDelay:customMinimumMessageVisibleTime_];
     }
   
     self.lastPostedMessage = message;
 }
 
-- (void)hide {
-	[self.activityIndicator stopAnimating];
-	self.statusLabel1.text = @"";
-	self.statusLabel2.text = @"";
-  
-  self.iconView1.image = nil;
-  self.iconView2.image = nil;
+
+- (void)hide:(NSString*)type {
   
   self.tapBlock = nil;
-    
-	self.hideInProgress = NO;
+  
+  self.hideInProgress = NO;
 	// cancel previous hide- and clear requests
-	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide) object:nil];
-    
-	// hide detailView
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide:) object:nil];
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide:) object:@"slide"];
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hide:) object:@"fade"];
+  
+  // hide detailView
 	[self setDetailViewHidden:YES animated:YES];
-    
-	// hide status bar overlay with animation
-    [UIView animateWithDuration:self.shrinked ? 0. : kAppearAnimationDuration
-                          delay:0 
-                        options:UIViewAnimationOptionAllowUserInteraction 
-                     animations:^{
-		[self setHidden:YES useAlpha:YES];
-	} completion:^(BOOL finished) {
+  
+  //
+  void (^completionBlock)(BOOL) = ^(BOOL finished){
 		// call delegate
 		if ([self.delegate respondsToSelector:@selector(statusBarOverlayDidHide)]) {
 			[self.delegate statusBarOverlayDidHide];
 		}
-	}];
+  };
+  
+  if ([type isEqualToString:@"slide"]) {
+    
+    // hide status bar overlay with animation
+    [UIView animateWithDuration:self.shrinked ? 0. : customAppearAnimationDuration_
+                          delay:0
+                        options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
+                     animations:^{
+                       [self setOffscreen:YES];
+                     } completion:^(BOOL finished) {
+                       if (finished) {
+                         [self.activityIndicator stopAnimating];
+                         self.statusLabel1.text = @"";
+                         self.statusLabel2.text = @"";
+                         
+                         self.iconView1.image = nil;
+                         self.iconView2.image = nil;
+                         
+                         [self setHidden:YES useAlpha:YES];
+                       }
+                       completionBlock(finished);
+                     }];
+    
+  } else if ([type isEqualToString:@"fade"]) {
+    
+    // hide status bar overlay with animation
+    [UIView animateWithDuration:self.shrinked ? 0. : customAppearAnimationDuration_
+                          delay:0
+                        options:UIViewAnimationOptionAllowUserInteraction
+                     animations:^{
+                       [self setHidden:YES useAlpha:YES];
+                     } completion:^(BOOL finished) {
+                       if (finished) {
+                         [self.activityIndicator stopAnimating];
+                         self.statusLabel1.text = @"";
+                         self.statusLabel2.text = @"";
+                         
+                         self.iconView1.image = nil;
+                         self.iconView2.image = nil;
+                         
+                         [self setOffscreen:YES];
+                       }
+                       completionBlock(finished);
+                     }];
+  } else {
+    [self.activityIndicator stopAnimating];
+    self.statusLabel1.text = @"";
+    self.statusLabel2.text = @"";
+    
+    self.iconView1.image = nil;
+    self.iconView2.image = nil;
+    
+    [self setHidden:YES useAlpha:YES];
+    [self setOffscreen:YES];
+
+    completionBlock(YES);
+  }
 }
 
 - (void)hideTemporary {
     self.forcedToHide = YES;
-    
+  
     // hide status bar overlay with animation
-	[UIView animateWithDuration:self.shrinked ? 0. : kAppearAnimationDuration animations:^{
-		[self setHidden:YES useAlpha:YES];
-	}];
+    [UIView animateWithDuration:self.shrinked ? 0. : customAppearAnimationDuration_ animations:^{
+      [self setHidden:YES useAlpha:YES];
+    }];
 }
+
 // this shows the status bar overlay, if there is text to show
 - (void)show {
+
     self.forcedToHide = NO;
+  
+    // Make sure onscreen
+    [self setOffscreen:NO];
     
-    if (self.reallyHidden) {
+    if (self.statedHidden) {
         if (self.visibleStatusLabel.text.length > 0) {
             // show status bar overlay with animation
-            [UIView animateWithDuration:self.shrinked ? 0. : kAppearAnimationDuration animations:^{
+            [UIView animateWithDuration:self.shrinked ? 0. : customAppearAnimationDuration_ animations:^{
                 [self setHidden:NO useAlpha:YES];
             }];
         }
@@ -1122,7 +1411,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	// current interface orientation
     UIInterfaceOrientation orientation = [UIApplication sharedApplication].statusBarOrientation;
 	// is the statusBar visible before rotation?
-	BOOL visibleBeforeTransformation = !self.reallyHidden;
+	BOOL visibleBeforeTransformation = !self.statedHidden;
 	// store a flag, if the StatusBar is currently shrinked
 	BOOL shrinkedBeforeTransformation = self.shrinked;
     
@@ -1136,28 +1425,39 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	CGFloat pi = (CGFloat)M_PI;
 	if (orientation == UIDeviceOrientationPortrait) {
 		self.transform = CGAffineTransformIdentity;
-		self.frame = CGRectMake(0.f,0.f,kScreenWidth,kStatusBarHeight);
+		self.frame = CGRectMake(0.f,0.f,kScreenWidth,customOverlayHeight_);
 		self.smallFrame = CGRectMake(self.frame.size.width - kWidthSmall, 0.0f, kWidthSmall, self.frame.size.height);
 	}else if (orientation == UIDeviceOrientationLandscapeLeft) {
 		self.transform = CGAffineTransformMakeRotation(pi * (90.f) / 180.0f);
-		self.frame = CGRectMake(kScreenWidth - kStatusBarHeight,0, kStatusBarHeight, kScreenHeight);
-		self.smallFrame = CGRectMake(kScreenHeight-kWidthSmall,0,kWidthSmall,kStatusBarHeight);
+		self.frame = CGRectMake(kScreenWidth - customOverlayHeight_,0, customOverlayHeight_, kScreenHeight);
+		self.smallFrame = CGRectMake(kScreenHeight-kWidthSmall,0,kWidthSmall,customOverlayHeight_);
 	} else if (orientation == UIDeviceOrientationLandscapeRight) {
 		self.transform = CGAffineTransformMakeRotation(pi * (-90.f) / 180.0f);
-		self.frame = CGRectMake(0.f,0.f, kStatusBarHeight, kScreenHeight);
-		self.smallFrame = CGRectMake(kScreenHeight-kWidthSmall,0.f, kWidthSmall, kStatusBarHeight);
+		self.frame = CGRectMake(0.f,0.f, customOverlayHeight_, kScreenHeight);
+		self.smallFrame = CGRectMake(kScreenHeight-kWidthSmall,0.f, kWidthSmall, customOverlayHeight_);
 	} else if (orientation == UIDeviceOrientationPortraitUpsideDown) {
 		self.transform = CGAffineTransformMakeRotation(pi);
-		self.frame = CGRectMake(0.f,kScreenHeight - kStatusBarHeight,kScreenWidth,kStatusBarHeight);
+		self.frame = CGRectMake(0.f,kScreenHeight - customOverlayHeight_,kScreenWidth,customOverlayHeight_);
 		self.smallFrame = CGRectMake(self.frame.size.width - kWidthSmall, 0.f, kWidthSmall, self.frame.size.height);
 	}
-    
-    self.backgroundView.frame = [self backgroundViewFrameForStatusBarInterfaceOrientation];
+  
+  // JM: Update frame for backgroundView but preserve visible portion, because we may have modified that for transition.
+  CGRect oldBackgroundFrame = self.backgroundView.frame;
+  CGFloat oldVisibleHeight = CGRectGetMaxY(oldBackgroundFrame);
+  if (oldVisibleHeight < 0) {
+    oldVisibleHeight = 0;
+  }
+  CGRect backgroundViewFrameForStatusBarInterfaceOrientation = [self backgroundViewFrameForStatusBarInterfaceOrientation];
+  backgroundViewFrameForStatusBarInterfaceOrientation.origin.y = oldVisibleHeight - CGRectGetHeight(backgroundViewFrameForStatusBarInterfaceOrientation);
+  if (CGRectGetMinX(backgroundViewFrameForStatusBarInterfaceOrientation) > 0) {
+    backgroundViewFrameForStatusBarInterfaceOrientation.origin.y = 0;
+  }  
+  self.backgroundView.frame = backgroundViewFrameForStatusBarInterfaceOrientation;
     
 	// if the statusBar is currently shrinked, update the frames for the new rotation state
 	if (shrinkedBeforeTransformation) {
 		// the oldBackgroundViewFrame is the frame of the whole StatusBar
-		self.oldBackgroundViewFrame = CGRectMake(0.f,0.f,UIInterfaceOrientationIsPortrait(orientation) ? kScreenWidth : kScreenHeight,kStatusBarHeight);
+		self.oldBackgroundViewFrame = CGRectMake(0.f,0.f,UIInterfaceOrientationIsPortrait(orientation) ? kScreenWidth : kScreenHeight,customOverlayHeight_);
 		// the backgroundView gets the newly computed smallFrame
 		self.backgroundView.frame = self.smallFrame;
 	}
@@ -1169,8 +1469,8 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 		// DeviceDidRotate-Notification to StatusBarFrameChanged-Notification
 		// therefore iplemented it with a UIView-Animation instead
 		//[self performSelector:@selector(setHiddenUsingAlpha:) withObject:[NSNumber numberWithBool:NO] afterDelay:kRotationAppearDelay];
-        
-		[UIView animateWithDuration:kAppearAnimationDuration
+    
+		[UIView animateWithDuration:customAppearAnimationDuration_
 							  delay:kRotationAppearDelay
 							options:UIViewAnimationOptionCurveEaseInOut
 						 animations:^{
@@ -1282,7 +1582,7 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 
 - (BOOL)isDetailViewHidden {
 	return self.detailView.hidden == YES || self.detailView.alpha == 0.f ||
-    self.detailView.frame.origin.y + self.detailView.frame.size.height < kStatusBarHeight;
+    self.detailView.frame.origin.y + self.detailView.frame.size.height < customOverlayHeight_;
 }
 
 - (void)setDetailViewHidden:(BOOL)hidden animated:(BOOL)animated {
@@ -1310,13 +1610,13 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 							 if (self.detailViewMode == MTDetailViewModeHistory) {
 								 y = -(kMaxHistoryTableRowCount - MIN(self.messageHistory.count, kMaxHistoryTableRowCount)) * kHistoryTableRowHeight;
                                  
-								 self.historyTableView.frame = CGRectMake(self.historyTableView.frame.origin.x, kStatusBarHeight - y,
+								 self.historyTableView.frame = CGRectMake(self.historyTableView.frame.origin.x, customOverlayHeight_ - y,
 																		  self.historyTableView.frame.size.width, self.historyTableView.frame.size.height);
 							 }
                              
 							 if (self.detailViewMode == MTDetailViewModeDetailText) {
 								 self.detailView.frame = CGRectMake(self.detailView.frame.origin.x, y,
-																	self.detailView.frame.size.width, self.detailTextView.frame.size.height + kStatusBarHeight);
+																	self.detailView.frame.size.width, self.detailTextView.frame.size.height + customOverlayHeight_);
 							 } else {
 								 self.detailView.frame = CGRectMake(self.detailView.frame.origin.x, y,
 																	self.detailView.frame.size.width, self.detailView.frame.size.height);
@@ -1342,6 +1642,15 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
   
 	return self.iconView1;
 }
+
+// JM: Override setter to make sure layout is updated when height value is changed.
+- (void)setCustomOverlayHeight:(float)customOverlayHeight {
+  if (customOverlayHeight_ != customOverlayHeight) {
+    customOverlayHeight_ = customOverlayHeight;
+    [self updateLayout];
+  }
+}
+
 
 ////////////////////////////////////////////////////////////////////////
 #pragma mark -
@@ -1406,8 +1715,10 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
                     if(self.tapBlock != nil)
                     {
                       self.tapBlock();
+                      [self hide:nil];
+                    } else {
+                      [self hide:@"fade"];
                     }
-                    [self hide];
                     break;
             }
         }
@@ -1632,7 +1943,11 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
     // if a duration is specified, hide after given duration
     if (duration > 0.) {
         // hide after duration
-        [self performSelector:@selector(hide) withObject:nil afterDelay:duration];
+      if (transitionType_ == MTTransitionTypeOverlayInOut) {
+        [self performSelector:@selector(hide:) withObject:@"slide" afterDelay:duration];
+      } else {
+        [self performSelector:@selector(hide:) withObject:@"fade" afterDelay:duration];
+      }
         // clear history after duration
         [self performSelector:@selector(clearHistory) withObject:nil afterDelay:duration];
     }
@@ -1687,9 +2002,10 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
     UIInterfaceOrientation interfaceOrientation = [[UIApplication sharedApplication] statusBarOrientation];
     
     return (UIInterfaceOrientationIsLandscape(interfaceOrientation) ? 
-            CGRectMake(0, 0, kScreenHeight, kStatusBarHeight) : 
-            CGRectMake(0, 0, kScreenWidth, kStatusBarHeight));
+            CGRectMake(0, 0, kScreenHeight, customOverlayHeight_) :
+            CGRectMake(0, 0, kScreenWidth, customOverlayHeight_));
 }
+
 
 ////////////////////////////////////////////////////////////////////////
 #pragma mark -
@@ -1752,8 +2068,34 @@ kDetailViewWidth, kHistoryTableRowHeight*kMaxHistoryTableRowCount + kStatusBarHe
 	}
 }
 
-- (BOOL)isReallyHidden {
+- (BOOL)isStatedHidden {
 	return self.alpha == 0.f || self.hidden;
+}
+
+- (BOOL)isFullyHidden {
+  return [self.layer.presentationLayer opacity] == 0.f || self.hidden;
+}
+
+- (BOOL)isPartlyHidden {
+  return [self.layer.presentationLayer opacity] < 1.0 || self.hidden;
+}
+
+- (void)setOffscreen:(BOOL)offscreen {
+  CGRect backgroundViewFrame = self.backgroundView.frame;
+  backgroundViewFrame.origin.y = offscreen ? -CGRectGetHeight(backgroundViewFrame) : 0.f;
+  self.backgroundView.frame = backgroundViewFrame;
+}
+
+- (BOOL)isStatedOffscreen {
+  return !(CGRectGetMaxY(self.backgroundView.frame) > 0);
+}
+
+- (BOOL)isFullyOffscreen {
+  return !(CGRectGetMaxY([self.backgroundView.layer.presentationLayer frame]) > 0);
+}
+
+- (BOOL)isPartlyOffscreen {
+  return CGRectGetMinY([self.backgroundView.layer.presentationLayer frame]) < 0;
 }
 
 ////////////////////////////////////////////////////////////////////////
